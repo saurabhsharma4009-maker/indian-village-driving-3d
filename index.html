@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Indian Village Driving 3D — Prototype 0.1</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#9bd0ed; font-family:system-ui,-apple-system,sans-serif; touch-action:none; }
+  #game { display:block; width:100%; height:100%; }
+  #hud { position:fixed; inset:12px 12px auto 12px; display:flex; justify-content:space-between; gap:8px; pointer-events:none; color:white; text-shadow:0 2px 4px #24313b; font-weight:800; }
+  .pill { background:#13232dbb; border:1px solid #ffffff44; border-radius:14px; padding:8px 12px; font-size:14px; }
+  #message { position:fixed; top:66px; left:50%; transform:translateX(-50%); color:white; background:#13232dcc; padding:8px 14px; border-radius:12px; font-size:12px; text-align:center; white-space:nowrap; pointer-events:none; }
+  #controls { position:fixed; inset:auto 0 18px; display:flex; justify-content:space-between; align-items:end; padding:0 18px; pointer-events:none; }
+  .cluster { display:flex; gap:12px; align-items:end; }
+  .control { pointer-events:auto; width:68px; height:68px; border-radius:50%; border:2px solid #ffffffaa; background:#172b39bb; color:white; font-size:25px; font-weight:900; box-shadow:0 4px 12px #0005; touch-action:none; user-select:none; -webkit-user-select:none; }
+  .control.small { width:58px; height:58px; font-size:13px; }
+  .control:active, .control.active { background:#e18b2cdd; transform:scale(.96); }
+  #hint { position:fixed; bottom:98px; left:50%; transform:translateX(-50%); color:white; font-size:11px; text-shadow:0 1px 3px #000; white-space:nowrap; pointer-events:none; }
+  @media (min-width:700px) { .control { width:76px;height:76px } #controls {padding:0 34px 24px} }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div class="pill">🚙 VILLAGE DRIVE</div>
+  <div class="pill">SPEED <span id="speed">0</span> km/h</div>
+  <div class="pill">🪙 <span id="coins">0</span></div>
+</div>
+<div id="message">MISSION 01 · Explore the village road</div>
+<div id="hint">Hold ▲ to accelerate · ◀ ▶ to steer · ▼ to brake</div>
+<div id="controls">
+  <div class="cluster">
+    <button class="control" data-control="left" aria-label="Steer left">◀</button>
+    <button class="control" data-control="right" aria-label="Steer right">▶</button>
+  </div>
+  <div class="cluster">
+    <button class="control small" data-control="brake" aria-label="Brake">BRAKE</button>
+    <button class="control" data-control="gas" aria-label="Accelerate">▲</button>
+  </div>
+</div>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const canvas = document.querySelector('#game');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9bcde5);
+scene.fog = new THREE.Fog(0x9bcde5, 65, 220);
+const camera = new THREE.PerspectiveCamera(62, innerWidth/innerHeight, 0.1, 350);
+camera.position.set(0, 5.2, 10.5);
+
+scene.add(new THREE.HemisphereLight(0xd9efff, 0x687342, 2.0));
+const sun = new THREE.DirectionalLight(0xffedce, 2.3);
+sun.position.set(-18, 30, 12);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+sun.shadow.camera.left=-35; sun.shadow.camera.right=35;
+sun.shadow.camera.top=35; sun.shadow.camera.bottom=-35;
+scene.add(sun);
+
+const mat = (color, roughness=1) => new THREE.MeshStandardMaterial({color, roughness});
+const grassMat = mat(0x6d9848), roadMat = mat(0x414747), dirtMat = mat(0xa98a5c);
+const whiteMat = mat(0xe9e4d7), darkMat = mat(0x202a30), tyreMat = mat(0x17191a);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(500,500), grassMat);
+ground.rotation.x=-Math.PI/2; ground.position.y=-0.12; ground.receiveShadow=true; scene.add(ground);
+
+const road = new THREE.Mesh(new THREE.PlaneGeometry(8,420), roadMat);
+road.rotation.x=-Math.PI/2; road.position.set(0,0,-175); road.receiveShadow=true; scene.add(road);
+for (let z=18; z>-390; z-=12) {
+  const dash = new THREE.Mesh(new THREE.BoxGeometry(.13,.025,5), mat(0xe6dfc8));
+  dash.position.set(0,.025,z); scene.add(dash);
+}
+for (const x of [-4.15,4.15]) {
+  const edge = new THREE.Mesh(new THREE.BoxGeometry(.12,.04,420), mat(0xc9b58b));
+  edge.position.set(x,.025,-175); scene.add(edge);
+  const shoulder = new THREE.Mesh(new THREE.PlaneGeometry(2,420), dirtMat);
+  shoulder.rotation.x=-Math.PI/2; shoulder.position.set(x*1.25,-.04,-175); scene.add(shoulder);
+}
+
+// Crop rows in distant fields
+for (let side of [-1,1]) {
+  for (let i=0;i<38;i++) {
+    const z=15-i*10;
+    const crop = new THREE.Mesh(new THREE.BoxGeometry(12,.16,1.2), mat(i%2?0x7da64c:0x86ad55));
+    crop.position.set(side*14,-.02,z); scene.add(crop);
+  }
+}
+
+function makeTree(x,z,scale=1) {
+  const g=new THREE.Group();
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.16,.24,2.2,7), mat(0x765033));
+  trunk.position.y=1.1; trunk.castShadow=true; g.add(trunk);
+  const crown=new THREE.Mesh(new THREE.SphereGeometry(1.25,9,7), mat(0x3f713c));
+  crown.position.y=2.8; crown.scale.set(1,1.12,.9); crown.castShadow=true; g.add(crown);
+  const crown2=new THREE.Mesh(new THREE.SphereGeometry(.78,8,6), mat(0x568747));
+  crown2.position.set(.55,3.25,.1); crown2.castShadow=true; g.add(crown2);
+  g.position.set(x,0,z); g.scale.setScalar(scale); scene.add(g);
+}
+function makeHouse(x,z,variant=0) {
+  const g=new THREE.Group();
+  const wallColors=[0xd5b78a,0xc8a77b,0xe0c89c];
+  const walls=new THREE.Mesh(new THREE.BoxGeometry(5,2.6,4),mat(wallColors[variant%3]));
+  walls.position.y=1.3; walls.castShadow=true; walls.receiveShadow=true; g.add(walls);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(3.7,1.7,4),mat(variant%2?0x984f35:0x80503c));
+  roof.position.y=3.35; roof.rotation.y=Math.PI/4; roof.castShadow=true; g.add(roof);
+  const door=new THREE.Mesh(new THREE.BoxGeometry(.8,1.6,.08),mat(0x573b2a));
+  door.position.set(0,.8,2.04); g.add(door);
+  const winMat=mat(0x526d77);
+  for(const wx of [-1.5,1.5]){
+    const win=new THREE.Mesh(new THREE.BoxGeometry(.7,.7,.08),winMat);
+    win.position.set(wx,1.55,2.05); g.add(win);
+  }
+  g.position.set(x,0,z); scene.add(g);
+}
+for(let i=0;i<15;i++){
+  const z=10-i*24;
+  makeTree(-7.8,z, .8+(i%3)*.12);
+  makeTree(8.2,z-9, .85+(i%2)*.2);
+  if(i%2===0) makeHouse(i%4===0?-12:12,z-7,i);
+}
+
+// SUV model made from simple meshes; replace with licensed 3D vehicle asset later.
+const car = new THREE.Group(); scene.add(car);
+const body = new THREE.Mesh(new THREE.BoxGeometry(2.05,.72,4.0),mat(0xd9dedb,.48));
+body.position.y=.95; body.castShadow=true; car.add(body);
+const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.72,.9,2.0),mat(0x9db7c0,.35));
+cabin.position.set(0,1.72,-.25); cabin.castShadow=true; car.add(cabin);
+const roof = new THREE.Mesh(new THREE.BoxGeometry(1.76,.12,1.95),mat(0xe8e9e4,.5));
+roof.position.set(0,2.2,-.25); car.add(roof);
+const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.12,.22,.18),darkMat);
+bumper.position.set(0,.62,-2.02); car.add(bumper);
+const frontBumper = bumper.clone(); frontBumper.position.z=2.02; car.add(frontBumper);
+const glass = mat(0x42616d,.25);
+for (const x of [-.87,.87]) {
+  const sideWindow=new THREE.Mesh(new THREE.BoxGeometry(.035,.57,1.45),glass);
+  sideWindow.position.set(x,1.77,-.22); car.add(sideWindow);
+}
+const wheels=[];
+for(const x of [-1.05,1.05]) for(const z of [-1.3,1.3]){
+  const wheel=new THREE.Mesh(new THREE.CylinderGeometry(.43,.43,.28,16),tyreMat);
+  wheel.rotation.z=Math.PI/2; wheel.position.set(x,.53,z); wheel.castShadow=true; car.add(wheel); wheels.push(wheel);
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(.19,.19,.295,12),mat(0xb9bec0));
+  hub.rotation.z=Math.PI/2; hub.position.copy(wheel.position); car.add(hub);
+}
+for(const x of [-.72,.72]){
+  const lamp=new THREE.Mesh(new THREE.BoxGeometry(.42,.22,.08),mat(0xfff0b0));
+  lamp.position.set(x,1.0,2.04); car.add(lamp);
+}
+car.position.set(0,0,3);
+
+const input={left:false,right:false,gas:false,brake:false};
+document.querySelectorAll('[data-control]').forEach(btn=>{
+  const key=btn.dataset.control;
+  const down=e=>{e.preventDefault();input[key]=true;btn.classList.add('active');};
+  const up=e=>{e.preventDefault();input[key]=false;btn.classList.remove('active');};
+  btn.addEventListener('pointerdown',down);
+  btn.addEventListener('pointerup',up);
+  btn.addEventListener('pointercancel',up);
+  btn.addEventListener('lostpointercapture',up);
+});
+addEventListener('keydown',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a')input.left=true;
+  if(e.key==='ArrowRight'||e.key==='d')input.right=true;
+  if(e.key==='ArrowUp'||e.key==='w')input.gas=true;
+  if(e.key==='ArrowDown'||e.key==='s'||e.key===' ')input.brake=true;
+});
+addEventListener('keyup',e=>{
+  if(e.key==='ArrowLeft'||e.key==='a')input.left=false;
+  if(e.key==='ArrowRight'||e.key==='d')input.right=false;
+  if(e.key==='ArrowUp'||e.key==='w')input.gas=false;
+  if(e.key==='ArrowDown'||e.key==='s'||e.key===' ')input.brake=false;
+});
+
+let speed=0, coins=0, distance=0, last=performance.now();
+const speedEl=document.querySelector('#speed'), coinsEl=document.querySelector('#coins');
+function animate(now){
+  requestAnimationFrame(animate);
+  const dt=Math.min((now-last)/1000,.04); last=now;
+  if(input.gas) speed=Math.min(34,speed+19*dt);
+  else speed=Math.max(0,speed-5*dt);
+  if(input.brake) speed=Math.max(0,speed-30*dt);
+  const steer=(input.left?-1:0)+(input.right?1:0);
+  car.position.x=THREE.MathUtils.clamp(car.position.x+steer*speed*.055*dt,-3.1,3.1);
+  car.rotation.y=THREE.MathUtils.damp(car.rotation.y,-steer*.12,5,dt);
+  car.position.z-=speed*dt*.18;
+  distance+=speed*dt;
+  if(distance>120){coins+=50;distance=0;coinsEl.textContent=coins;}
+  wheels.forEach(w=>w.rotation.x-=speed*dt*.8);
+  camera.position.x=THREE.MathUtils.damp(camera.position.x,car.position.x*.42,3,dt);
+  camera.position.z=THREE.MathUtils.damp(camera.position.z,car.position.z+10.5,3,dt);
+  camera.lookAt(car.position.x*.55,1.0,car.position.z-5);
+  speedEl.textContent=Math.round(speed*3.6);
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
